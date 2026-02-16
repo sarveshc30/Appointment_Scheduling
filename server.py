@@ -2,13 +2,11 @@ from dotenv import load_dotenv
 import os
 from flask import Flask, render_template, request, jsonify
 from supabase import create_client, Client
-from datetime import datetime, timedelta
+from datetime import datetime
 import smtplib
-import aiosmtplib
-import asyncio
-from apscheduler.schedulers.background import BackgroundScheduler
-import atexit
+from email.message import EmailMessage
 
+# Load environment variables
 load_dotenv()
 
 # Initialize Flask app
@@ -23,73 +21,43 @@ supabase: Client = create_client(url, key)
 email_sender: str = os.environ.get("EMAIL")
 email_password: str = os.environ.get("SMTP_GMAIL_PASSWORD")
 
-async def send_email(recipient_email, subject, body):
-    """Send email asynchronously using aiosmtplib"""
+
+# ----------------------------
+# Email Sending Function
+# ----------------------------
+def send_email(recipient_email, subject, body):
+    """Send email using Gmail SMTP SSL"""
     try:
-        async with aiosmtplib.SMTP(hostname="smtp.gmail.com", port=465, use_tls=True) as smtp:
-            await smtp.login(email_sender, email_password)
-            message = f"Subject: {subject}\n\n{body}"
-            await smtp.sendmail(email_sender, recipient_email, message)
+        msg = EmailMessage()
+        msg["From"] = email_sender
+        msg["To"] = recipient_email
+        msg["Subject"] = subject
+        msg.set_content(body)
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(email_sender, email_password)
+            server.send_message(msg)
+
+        print("Email sent successfully.")
         return True
+
     except Exception as e:
-        print(f"Failed to send email: {e}")
+        print(f"Email failed: {e}")
         return False
 
-async def send_reminders():
-    """Send reminder emails for appointments tomorrow"""
-    tomorrow = datetime.now() + timedelta(days=1)
-    start_of_tomorrow = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
-    start_of_day_after = start_of_tomorrow + timedelta(days=1)
 
-    try:
-        response = (
-            supabase.table("Appointment_Data")
-            .select("*")
-            .gte("appointment_datetime", start_of_tomorrow.strftime("%Y-%m-%d %H:%M:%S"))
-            .lt("appointment_datetime", start_of_day_after.strftime("%Y-%m-%d %H:%M:%S"))
-            .execute()
-        )
-
-        appointments = response.data
-        print(f"Found {len(appointments)} appointments for tomorrow.")
-
-        tasks = []
-        for appointment in appointments:
-            name = appointment.get("Name")
-            email_address = appointment.get("email")
-            appointment_time = appointment.get("appointment_datetime")
-            
-            body = f"Dear {name},\n\nThis is a reminder for your appointment scheduled on {appointment_time}.\n\nBest regards,\nYour Company"
-            tasks.append(send_email(email_address, "Appointment Reminder", body))
-
-        if tasks:
-            await asyncio.gather(*tasks)
-
-    except Exception as e:
-        print(f"An error occurred while fetching appointments: {e}")
-
-# Initialize scheduler
-scheduler = BackgroundScheduler()
-scheduler.start()
-
-# Wrapper to run async send_reminders in scheduler
-def send_reminders_sync():
-    asyncio.run(send_reminders())
-
-# Schedule send_reminders() to run daily at 13:30 (1:30 PM)
-scheduler.add_job(send_reminders_sync, 'cron', hour=17, minute=13, id='send_reminders_job')
-
-# Shut down scheduler when Flask exits
-atexit.register(lambda: scheduler.shutdown())
-
+# ----------------------------
+# Routes
+# ----------------------------
 @app.route("/", methods=["GET"])
 def index():
     """Serve the appointment booking form"""
     return render_template("website.html")
 
+
 @app.route("/book-appointment", methods=["POST"])
-async def book_appointment():
-    """Handle appointment booking from the form"""
+def book_appointment():
+    """Handle appointment booking"""
     try:
         data = request.get_json()
         name = data.get("name")
@@ -101,54 +69,51 @@ async def book_appointment():
         if not all([name, email_address, date, time]):
             return jsonify({"status": "error", "message": "Missing required fields"}), 400
 
-        # Combine date and time into a single datetime string
+        # Combine date and time
         appointment_datetime = f"{date} {time}"
 
-        # Check availability (if slot already booked)
-        try:
-            check_response = (
-                supabase.table("Appointment_Data")
-                .select("*")
-                .eq("appointment_datetime", appointment_datetime)
-                .execute()
-            )
+        # Check availability
+        check_response = (
+            supabase.table("Appointment_Data")
+            .select("*")
+            .eq("appointment_datetime", appointment_datetime)
+            .execute()
+        )
 
-            if check_response.data:
-                return jsonify({"status": "unavailable", "message": "Slot already booked"}), 200
-        except Exception as e:
-            print(f"Error checking availability: {e}")
+        if check_response.data:
+            return jsonify({"status": "unavailable"}), 200
 
-        # Insert new appointment
-        try:
-            insert_response = (
-                supabase.table("Appointment_Data")
-                .insert({
-                    "appointment_datetime": appointment_datetime,
-                    "Name": name,
-                    "email": email_address
-                })
-                .execute()
-            )
+        # Insert appointment
+        supabase.table("Appointment_Data").insert({
+            "appointment_datetime": appointment_datetime,
+            "Name": name,
+            "email": email_address
+        }).execute()
 
-            # Send confirmation email asynchronously
-            confirmation_body = f"Dear {name},\n\nYour appointment has been booked successfully!\n\nDate: {date}\nTime: {time}\n\nThank you!"
-            await send_email(email_address, "Appointment Confirmation", confirmation_body)
+        # Send confirmation email
+        confirmation_body = f"""
+Dear {name},
 
-            return jsonify({"status": "success", "message": "Appointment booked successfully"}), 201
+Your appointment has been booked successfully!
 
-        except Exception as e:
-            print(f"Error inserting appointment: {e}")
-            return jsonify({"status": "error", "message": str(e)}), 500
+Date: {date}
+Time: {time}
+
+Thank you!
+"""
+
+        send_email(email_address, "Appointment Confirmation", confirmation_body)
+
+        return jsonify({"status": "success"}), 201
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Error: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-if __name__ == "__main__":
-    try:
-        print("Starting Flask server with scheduled daily reminders at 1:27 PM...")
-        port = int(os.environ.get("PORT", 5000))
-        app.run(debug=False, host="0.0.0.0", port=port)
 
-    except (KeyboardInterrupt, SystemExit):
-        scheduler.shutdown()
+# ----------------------------
+# Run Server (Render Compatible)
+# ----------------------------
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
