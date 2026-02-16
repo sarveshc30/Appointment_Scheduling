@@ -4,6 +4,8 @@ from flask import Flask, render_template, request, jsonify
 from supabase import create_client, Client
 from datetime import datetime, timedelta
 import smtplib
+import aiosmtplib
+import asyncio
 from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
 
@@ -21,21 +23,19 @@ supabase: Client = create_client(url, key)
 email_sender: str = os.environ.get("EMAIL")
 email_password: str = os.environ.get("SMTP_GMAIL_PASSWORD")
 
-def send_email(recipient_email, subject, body):
-    """Send email using SMTP"""
+async def send_email(recipient_email, subject, body):
+    """Send email asynchronously using aiosmtplib"""
     try:
-        connection = smtplib.SMTP("smtp.gmail.com")
-        connection.starttls()
-        connection.login(user=email_sender, password=email_password)
-        message = f"Subject: {subject}\n\n{body}"
-        connection.sendmail(from_addr=email_sender, to_addrs=recipient_email, msg=message)
-        connection.quit()
+        async with aiosmtplib.SMTP(hostname="smtp.gmail.com", port=465, use_tls=True) as smtp:
+            await smtp.login(email_sender, email_password)
+            message = f"Subject: {subject}\n\n{body}"
+            await smtp.sendmail(email_sender, recipient_email, message)
         return True
     except Exception as e:
         print(f"Failed to send email: {e}")
         return False
 
-def send_reminders():
+async def send_reminders():
     """Send reminder emails for appointments tomorrow"""
     tomorrow = datetime.now() + timedelta(days=1)
     start_of_tomorrow = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -53,13 +53,17 @@ def send_reminders():
         appointments = response.data
         print(f"Found {len(appointments)} appointments for tomorrow.")
 
+        tasks = []
         for appointment in appointments:
             name = appointment.get("Name")
             email_address = appointment.get("email")
             appointment_time = appointment.get("appointment_datetime")
             
             body = f"Dear {name},\n\nThis is a reminder for your appointment scheduled on {appointment_time}.\n\nBest regards,\nYour Company"
-            send_email(email_address, "Appointment Reminder", body)
+            tasks.append(send_email(email_address, "Appointment Reminder", body))
+
+        if tasks:
+            await asyncio.gather(*tasks)
 
     except Exception as e:
         print(f"An error occurred while fetching appointments: {e}")
@@ -68,8 +72,12 @@ def send_reminders():
 scheduler = BackgroundScheduler()
 scheduler.start()
 
-# Schedule send_reminders() to run daily at 1:27 PM
-scheduler.add_job(send_reminders, 'cron', hour=13, minute=30, id='send_reminders_job')
+# Wrapper to run async send_reminders in scheduler
+def send_reminders_sync():
+    asyncio.run(send_reminders())
+
+# Schedule send_reminders() to run daily at 13:30 (1:30 PM)
+scheduler.add_job(send_reminders_sync, 'cron', hour=17, minute=13, id='send_reminders_job')
 
 # Shut down scheduler when Flask exits
 atexit.register(lambda: scheduler.shutdown())
@@ -80,7 +88,7 @@ def index():
     return render_template("website.html")
 
 @app.route("/book-appointment", methods=["POST"])
-def book_appointment():
+async def book_appointment():
     """Handle appointment booking from the form"""
     try:
         data = request.get_json()
@@ -122,9 +130,9 @@ def book_appointment():
                 .execute()
             )
 
-            # Send confirmation email
+            # Send confirmation email asynchronously
             confirmation_body = f"Dear {name},\n\nYour appointment has been booked successfully!\n\nDate: {date}\nTime: {time}\n\nThank you!"
-            send_email(email_address, "Appointment Confirmation", confirmation_body)
+            await send_email(email_address, "Appointment Confirmation", confirmation_body)
 
             return jsonify({"status": "success", "message": "Appointment booked successfully"}), 201
 

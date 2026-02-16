@@ -1,5 +1,6 @@
-flask==3.1.2
+flask[async]==3.1.2
 supabase
 python-dotenv
 apscheduler
 gunicorn
+aiosmtplib
