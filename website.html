@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Appointment Scheduler</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #4e73df, #1cc88a);
+        }
+
+        .container {
+            background: white;
+            padding: 40px;
+            width: 400px;
+            border-radius: 15px;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.15);
+            animation: fadeIn 0.6s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(15px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        h2 {
+            text-align: center;
+            margin-bottom: 25px;
+            color: #333;
+        }
+
+        label {
+            font-weight: 600;
+            font-size: 14px;
+            color: #555;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 12px;
+            margin-top: 6px;
+            margin-bottom: 18px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            transition: 0.3s;
+            font-size: 14px;
+        }
+
+        input:focus, select:focus {
+            border-color: #4e73df;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(78, 115, 223, 0.2);
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            border-radius: 8px;
+            border: none;
+            background: linear-gradient(135deg, #4e73df, #224abe);
+            color: white;
+            font-weight: bold;
+            font-size: 15px;
+            cursor: pointer;
+            transition: 0.3s ease;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 15px rgba(0, 0, 0, 0.15);
+        }
+
+        button:active {
+            transform: translateY(0);
+            box-shadow: none;
+        }
+
+        .message {
+            margin-top: 18px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 14px;
+            min-height: 20px;
+        }
+
+        .success {
+            color: #1cc88a;
+        }
+
+        .error {
+            color: #e74a3b;
+        }
+
+        @media (max-width: 480px) {
+            .container {
+                width: 90%;
+                padding: 25px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+    <h2>📅 Book Your Appointment</h2>
+
+    <form id="appointmentForm">
+
+        <label for="name">Full Name</label>
+        <input type="text" id="name" name="name" placeholder="Enter your name" required>
+
+        <label for="email">Email Address</label>
+        <input type="email" id="email" name="email" placeholder="Enter your email" required>
+
+        <label for="date">Select Date</label>
+        <input type="date" id="date" name="date" required>
+
+        <label for="time">Select Time</label>
+        <select id="time" name="time" required>
+            <option value="">-- Select Time --</option>
+            <option value="10:00 AM">10:00 AM</option>
+            <option value="11:00 AM">11:00 AM</option>
+            <option value="12:00 PM">12:00 PM</option>
+            <option value="1:00 PM">1:00 PM</option>
+            <option value="2:00 PM">2:00 PM</option>
+            <option value="3:00 PM">3:00 PM</option>
+        </select>
+
+        <button type="submit">Book Appointment</button>
+    </form>
+
+    <div id="responseMessage" class="message"></div>
+</div>
+
+<script>
+    document.getElementById("appointmentForm").addEventListener("submit", async function(e) {
+        e.preventDefault();
+
+        const name = document.getElementById("name").value;
+        const email = document.getElementById("email").value;
+        const date = document.getElementById("date").value;
+        const time = document.getElementById("time").value;
+
+        const responseMessage = document.getElementById("responseMessage");
+        responseMessage.textContent = "Checking availability...";
+        responseMessage.className = "message";
+
+        try {
+            const response = await fetch("/book-appointment", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    name: name,
+                    email: email,
+                    date: date,
+                    time: time
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.status === "success") {
+                responseMessage.textContent = "✅ Appointment Booked Successfully!";
+                responseMessage.classList.add("success");
+                document.getElementById("appointmentForm").reset();
+            } else {
+                responseMessage.textContent = "❌ Slot Not Available.";
+                responseMessage.classList.add("error");
+            }
+
+        } catch (error) {
+            responseMessage.textContent = "⚠️ Server error. Please try again.";
+            responseMessage.classList.add("error");
+        }
+    });
+</script>
+
+</body>
+</html>
