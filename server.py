@@ -26,15 +26,17 @@ email_password: str = os.environ.get("SMTP_GMAIL_PASSWORD")
 # Email Sending Function
 # ----------------------------
 def send_email(recipient_email, subject, body):
-    """Send email using Gmail SMTP SSL"""
     try:
+        print("EMAIL SENDER:", email_sender)
+        print("EMAIL PASSWORD EXISTS:", email_password is not None)
+
         msg = EmailMessage()
         msg["From"] = email_sender
         msg["To"] = recipient_email
         msg["Subject"] = subject
         msg.set_content(body)
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
             server.login(email_sender, email_password)
             server.send_message(msg)
 
@@ -42,7 +44,7 @@ def send_email(recipient_email, subject, body):
         return True
 
     except Exception as e:
-        print(f"Email failed: {e}")
+        print("EMAIL ERROR:", repr(e))
         return False
 
 
