@@ -2,50 +2,131 @@ from dotenv import load_dotenv
 import os
 from flask import Flask, render_template, request, jsonify
 from supabase import create_client, Client
-from datetime import datetime
-import smtplib
-from email.message import EmailMessage
+from datetime import datetime, timedelta
+from twilio.rest import Client as TwilioClient
+from apscheduler.schedulers.background import BackgroundScheduler
+import atexit
 
-# Load environment variables
 load_dotenv()
 
-# Initialize Flask app
+# ----------------------------
+# Flask App
+# ----------------------------
 app = Flask(__name__, template_folder=".")
 
-# Initialize Supabase
-url: str = os.environ.get("SUPABASE_URL")
-key: str = os.environ.get("SUPABASE_KEY")
-supabase: Client = create_client(url, key)
+# ----------------------------
+# Supabase Setup
+# ----------------------------
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Email configuration
-email_sender: str = os.environ.get("EMAIL")
-email_password: str = os.environ.get("SMTP_GMAIL_PASSWORD")
+# ----------------------------
+# Twilio Setup
+# ----------------------------
+ACCOUNT_SID = os.environ.get("account_sid")
+AUTH_TOKEN = os.environ.get("auth_token")
+
+twilio_client = TwilioClient(ACCOUNT_SID, AUTH_TOKEN)
+
+TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886"  # Twilio Sandbox
 
 
 # ----------------------------
-# Email Sending Function
+# Phone Number Normalizer
 # ----------------------------
-def send_email(recipient_email, subject, body):
+def normalize_phone_number(phone):
+    """
+    Ensures phone number is in international format.
+    Defaults to +91 if country code is missing.
+    """
+
+    # Remove spaces, dashes
+    phone = phone.replace(" ", "").replace("-", "")
+
+    # If already in international format
+    if phone.startswith("+"):
+        return phone
+
+    # If starts with 91 and length is 12 (e.g., 919876543210)
+    if phone.startswith("91") and len(phone) == 12:
+        return f"+{phone}"
+
+    # If 10-digit Indian number
+    if len(phone) == 10:
+        return f"+91{phone}"
+
+    # Fallback — return as is (Twilio will reject invalid)
+    return phone
+
+
+# ----------------------------
+# WhatsApp Send Function
+# ----------------------------
+def send_whatsapp(phone_number, message_body):
     try:
-        print("EMAIL SENDER:", email_sender)
-        print("EMAIL PASSWORD EXISTS:", email_password is not None)
-
-        msg = EmailMessage()
-        msg["From"] = email_sender
-        msg["To"] = recipient_email
-        msg["Subject"] = subject
-        msg.set_content(body)
-
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
-            server.login(email_sender, email_password)
-            server.send_message(msg)
-
-        print("Email sent successfully.")
+        message = twilio_client.messages.create(
+            from_=TWILIO_WHATSAPP_NUMBER,
+            body=message_body,
+            to=f"whatsapp:{phone_number}"
+        )
+        print("Twilio Message SID:", message.sid)
         return True
+    except Exception as e:
+        print("Twilio Error:", str(e))
+        return False
+
+
+# ----------------------------
+# Reminder Scheduler Function
+# ----------------------------
+def send_reminders():
+    tomorrow = datetime.now() + timedelta(days=1)
+    start_of_tomorrow = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_of_day_after = start_of_tomorrow + timedelta(days=1)
+
+    try:
+        response = (
+            supabase.table("Appointment_Data")
+            .select("*")
+            .gte("appointment_datetime", start_of_tomorrow.strftime("%Y-%m-%d %H:%M:%S"))
+            .lt("appointment_datetime", start_of_day_after.strftime("%Y-%m-%d %H:%M:%S"))
+            .execute()
+        )
+
+        appointments = response.data
+        print(f"Found {len(appointments)} appointments for tomorrow.")
+
+        for appointment in appointments:
+            name = appointment.get("Name")
+            phone = appointment.get("phone")
+            appointment_time = appointment.get("appointment_datetime")
+
+            reminder_message = f"""
+Hello {name},
+
+Reminder: You have an appointment tomorrow.
+
+Date & Time: {appointment_time}
+
+Please be on time.
+"""
+
+            send_whatsapp(phone, reminder_message)
 
     except Exception as e:
-        print("EMAIL ERROR:", repr(e))
-        return False
+        print("Reminder Error:", str(e))
+
+
+# ----------------------------
+# Scheduler Setup
+# ----------------------------
+scheduler = BackgroundScheduler()
+scheduler.start()
+
+scheduler.add_job(send_reminders, 'cron', hour=12, minute=35, id='send_reminders_job')
+
+atexit.register(lambda: scheduler.shutdown())
 
 
 # ----------------------------
@@ -53,28 +134,25 @@ def send_email(recipient_email, subject, body):
 # ----------------------------
 @app.route("/", methods=["GET"])
 def index():
-    """Serve the appointment booking form"""
     return render_template("website.html")
 
 
 @app.route("/book-appointment", methods=["POST"])
 def book_appointment():
-    """Handle appointment booking"""
     try:
         data = request.get_json()
+
         name = data.get("name")
-        email_address = data.get("email")
+        phone = normalize_phone_number(data.get("phone"))
         date = data.get("date")
         time = data.get("time")
 
-        # Validate input
-        if not all([name, email_address, date, time]):
-            return jsonify({"status": "error", "message": "Missing required fields"}), 400
+        if not all([name, phone, date, time]):
+            return jsonify({"status": "error"}), 400
 
-        # Combine date and time
         appointment_datetime = f"{date} {time}"
 
-        # Check availability
+        # Check slot availability
         check_response = (
             supabase.table("Appointment_Data")
             .select("*")
@@ -85,18 +163,18 @@ def book_appointment():
         if check_response.data:
             return jsonify({"status": "unavailable"}), 200
 
-        # Insert appointment
+        # Insert new appointment
         supabase.table("Appointment_Data").insert({
             "appointment_datetime": appointment_datetime,
             "Name": name,
-            "email": email_address
+            "phone": phone
         }).execute()
 
-        # Send confirmation email
-        confirmation_body = f"""
-Dear {name},
+        # Send Confirmation via WhatsApp
+        confirmation_message = f"""
+Hello {name},
 
-Your appointment has been booked successfully!
+Your appointment is confirmed ✅
 
 Date: {date}
 Time: {time}
@@ -104,18 +182,19 @@ Time: {time}
 Thank you!
 """
 
-        send_email(email_address, "Appointment Confirmation", confirmation_body)
+        send_whatsapp(phone, confirmation_message)
 
         return jsonify({"status": "success"}), 201
 
     except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        print("Booking Error:", str(e))
+        return jsonify({"status": "error"}), 500
 
 
 # ----------------------------
-# Run Server (Render Compatible)
+# Run App
 # ----------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
+    print("Starting Flask with Twilio messaging...")
     app.run(host="0.0.0.0", port=port, debug=False)

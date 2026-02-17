@@ -122,8 +122,9 @@
         <label for="name">Full Name</label>
         <input type="text" id="name" name="name" placeholder="Enter your name" required>
 
-        <label for="email">Email Address</label>
-        <input type="email" id="email" name="email" placeholder="Enter your email" required>
+        <label for="phone">Phone Number</label>
+        <input type="tel" id="phone" name="phone" placeholder="+91XXXXXXXXXX" required>
+
 
         <label for="date">Select Date</label>
         <input type="date" id="date" name="date" required>
@@ -150,7 +151,7 @@
         e.preventDefault();
 
         const name = document.getElementById("name").value;
-        const email = document.getElementById("email").value;
+        const phone = document.getElementById("phone").value;
         const date = document.getElementById("date").value;
         const time = document.getElementById("time").value;
 
@@ -164,12 +165,13 @@
                 headers: {
                     "Content-Type": "application/json"
                 },
-                body: JSON.stringify({
-                    name: name,
-                    email: email,
-                    date: date,
-                    time: time
-                })
+            body: JSON.stringify({
+                name: name,
+                phone: phone,
+                date: date,
+                time: time
+            })
+
             });
 
             const result = await response.json();
