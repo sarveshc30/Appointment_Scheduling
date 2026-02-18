@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 import os
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask_cors import CORS
 from supabase import create_client, Client
 from datetime import datetime, timedelta
 from twilio.rest import Client as TwilioClient
@@ -13,6 +14,15 @@ load_dotenv()
 # Flask App
 # ----------------------------
 app = Flask(__name__, template_folder=".")
+
+# Enable CORS for local development or configured origins
+# Set CORS_ORIGINS in environment (comma-separated), or leave unset to allow all origins.
+cors_origins = os.environ.get("CORS_ORIGINS", "*")
+if cors_origins == "*":
+    CORS(app)
+else:
+    origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
+    CORS(app, resources={r"/book-appointment": {"origins": origins}, r"/": {"origins": origins}})
 
 # ----------------------------
 # Supabase Setup
@@ -134,6 +144,12 @@ atexit.register(lambda: scheduler.shutdown())
 # ----------------------------
 @app.route("/", methods=["GET"])
 def index():
+    # If a built frontend exists in `dist/`, serve it (production build).
+    dist_index = os.path.join(os.path.dirname(__file__), "dist", "index.html")
+    if os.path.exists(dist_index):
+        return send_from_directory(os.path.join(os.path.dirname(__file__), "dist"), "index.html")
+
+    # Fallback to the existing `website.html` template during development or when no build is present.
     return render_template("website.html")
 
 
